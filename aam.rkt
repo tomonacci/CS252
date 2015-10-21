@@ -53,6 +53,9 @@
 (define (inj-CESK* expr)
   (term (,expr () ((0 . mt)) 0)))
 
+(define (enlarge-sigma-domain sigma)
+  (+ 1 (apply max (map car sigma))))
+
 (define red-CESK*
   (reduction-relation
    CESK*
@@ -61,16 +64,16 @@
            (term (,v ,rho sigma a)))
         "#1")
    (--> ((e_0 e_1) rho sigma a)
-        ,(let ((b (+ 1 (apply max (map car (term sigma))))))
+        ,(let ([b (enlarge-sigma-domain (term sigma))])
            (term (e_0 rho ,(dict-set (term sigma) b (term (ar e_1 rho a))) ,b)))
         "#2")
    (--> (v rho_0 sigma a_0)
-        ,(let ([b (+ 1 (apply max (map car (term sigma))))])
+        ,(let ([b (enlarge-sigma-domain (term sigma))])
            (term (e rho_1 ,(dict-set (term sigma) b (term (fn v rho_0 a_1))) ,b)))
         (where (ar e rho_1 a_1) ,(dict-ref (term sigma) (term a_0)))
         "#3")
    (--> (v rho_0 sigma a_0)
-        ,(let ([b (+ 1 (apply max (map car (term sigma))))])
+        ,(let ([b (enlarge-sigma-domain (term sigma))])
            (term (e
                   ,(dict-set (term rho_1) (term x) b)
                   ,(dict-set (term sigma) b (cons (term v) (term rho_0)))
