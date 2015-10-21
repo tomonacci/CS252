@@ -11,15 +11,31 @@
     (match expr
       [(? number?) (list k expr)]
       [((or '+ '- '* '/) e1 e2)
-       (let* ([v (variable)] [v- (variable)])
-         (cps e1 `(lambda (,v) ,(cps e2 `(lambda (,v-) (,k (,(car expr) ,v ,v-)))))))]
+       (receive (v cont)
+           (if (list? e1)
+             (let1 v (variable)
+               (values v (^k (cps e1 `(lambda (,v) ,k)))))
+             (values e1 identity))
+         (cont
+          (if (list? e2)
+            (let1 v1 (variable)
+              (cps e2 `(lambda (,v-) (,k (,(car expr) ,v ,v-)))))
+            `(,k (,(car expr) ,v ,e2)))))]
       [(? symbol?) (list k expr)]
       [('lambda (x) e)
        (let1 k- (continuation)
          `(,k (lambda (,x ,k-) ,(cps e k-))))]
       [(e1 e2)
-       (let* ([v (variable)] [v- (variable)])
-         (cps e1 `(lambda (,v) ,(cps e2 `(lambda (,v-) (,v ,v- ,k))))))]
+       (receive (v cont)
+           (if (list? e1)
+             (let1 v (variable)
+               (values v (^k (cps e1 `(lambda (,v) ,k)))))
+             (values e1 identity))
+         (cont
+          (if (list? e2)
+            (let1 v- (variable)
+              (cps e2 `(lambda (,v-) (,v ,v- ,k))))
+            `(,v ,e2 ,k))))]
       [else (errorf "unexpected ~s" expr)]))
   (cps expr k))
 
@@ -89,6 +105,8 @@
                ;'((lambda (a) (+ a 6)) 7)
                '((lambda (f) (f 3)) ((lambda (a) (lambda (x) (+ x a))) 2))
                ;'((lambda (a) (lambda (x) (+ x a))) 2)
+               ;'((lambda (f) (f 3)) (lambda (x) x))
+               ;'((lambda (f) ((lambda (g) (f g)) (lambda (x) (+ x 3)))) (lambda (f) (f 4)))
                ]
          [cps-expr (cps-translate expr 'identity)])
     ((.$ print srl:sxml->html)
