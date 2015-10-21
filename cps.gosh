@@ -39,6 +39,14 @@
       [else (errorf "unexpected ~s" expr)]))
   (cps expr k))
 
+(define (closure-convert expr)
+  (define (convert expr fvs)
+    (match expr
+      [('lambda (x) e) ()]
+      ))
+  (convert expr ())
+  )
+
 (define (pp expr)
   (define (pp-variable v)
     (let1 v (symbol->string v)
