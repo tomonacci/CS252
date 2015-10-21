@@ -91,16 +91,15 @@
                ;'((lambda (a) (lambda (x) (+ x a))) 2)
                ]
          [cps-expr (cps-translate expr 'identity)])
-    (print
-      (srl:sxml->html
-       `(html
-         (head (style "sub { font-size: 10px }"))
-         (body
-          (p . ,(pp expr))
-          (pre ,(format "~s" cps-expr))
-          (p . ,(pp cps-expr))
-          (pre ,(format "~s" (eval cps-expr (interaction-environment))))
-          )))))
+    ((.$ print srl:sxml->html)
+     `(html
+       (head (style "sub { font-size: 10px }"))
+       (body
+        (p . ,(pp expr))
+        (pre ,(format "~s" cps-expr))
+        (p . ,(pp cps-expr))
+        (pre ,(format "~s" (eval cps-expr (interaction-environment))))
+        ))))
   0)
 
 #;(define (main args)
