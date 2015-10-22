@@ -1,0 +1,133 @@
+(use gauche.generator)
+(use gauche.sequence)
+(use sxml.serializer)
+(use util.match)
+
+(define (cps-translate expr k)
+  (define index (generate (^y (let loop ((i 1)) (y i) (loop (+ i 1))))))
+  (define (variable) (string->symbol (format "v_~d" (index))))
+  (define (continuation) (string->symbol (format "k_~d" (index))))
+  (define (cps expr k)
+    (match expr
+      [(? number?) (list k expr)]
+      [((or '+ '- '* '/) e1 e2)
+       (receive (v cont)
+           (if (list? e1)
+             (let1 v (variable)
+               (values v (^k (cps e1 `(lambda (,v) ,k)))))
+             (values e1 identity))
+         (cont
+          (if (list? e2)
+            (let1 v1 (variable)
+              (cps e2 `(lambda (,v-) (,k (,(car expr) ,v ,v-)))))
+            `(,k (,(car expr) ,v ,e2)))))]
+      [(? symbol?) (list k expr)]
+      [('lambda (x) e)
+       (let1 k- (continuation)
+         `(,k (lambda (,x ,k-) ,(cps e k-))))]
+      [(e1 e2)
+       (receive (v cont)
+           (if (list? e1)
+             (let1 v (variable)
+               (values v (^k (cps e1 `(lambda (,v) ,k)))))
+             (values e1 identity))
+         (cont
+          (if (list? e2)
+            (let1 v- (variable)
+              (cps e2 `(lambda (,v-) (,v ,v- ,k))))
+            `(,v ,e2 ,k))))]
+      [else (errorf "unexpected ~s" expr)]))
+  (cps expr k))
+
+(define (closure-convert expr)
+  (define (convert expr fvs)
+    (match expr
+      [('lambda (x) e) ()]
+      ))
+  (convert expr ())
+  )
+
+(define (pp expr)
+  (define (pp-variable v)
+    (let1 v (symbol->string v)
+      (if-let1 m (#/([vk])_(\d+)/ v)
+        `((i ,(m 1)) (sub ,(m 2)))
+        `((i ,v)))))
+  (define *type-precedence-list*
+    '((number id) (app-left) (app-right) (* /) (+ -)))
+  (define (optionally-parenthesize type expr)
+    )
+  (define (parenthesize-if pred expr)
+    ((if (pred expr)
+       (cut append '("(") <> '(")"))
+       identity)
+     (pp expr)))
+  (match expr
+    [(? number?) (list expr)]
+    [((or '+ '- '* '/) e1 e2)
+     (append
+      ((if (list? e1) (cut append ("(") <> (")")) identity) (pp e1))
+      (list (format " ~s " (car expr)))
+      ((if (list? e2) (cut append ("(") <> (")")) identity) (pp e2)))]
+    [(? symbol?) (pp-variable expr)]
+    [('lambda (xs ...) e)
+     (append
+      '("λ")
+      ($ append-map (^s (if (list? s) s (list s)))
+       $ intersperse ","
+       $ map pp-variable xs)
+      '(". ")
+      (pp e))]
+    [(es ...)
+     ($ append-map (^s (if (list? s) s (list s)))
+      $ intersperse " "
+      $ map (cut parenthesize-if list? <>) es)]
+    [else (errorf "unexpected ~s" expr)]))
+
+(define (pp-formula formula)
+  (define (formula-type formula)
+    (match formula
+      [(? number?) 'number]
+      [(? symbol?) 'id]
+      [(op . _) op]))
+  (define *precedence-list* '((number id) (/ *) (+ -)))
+  (define (formula-type-precedence t)
+    (find-index (cut member t <>) *precedence-list*))
+  (define (formula-type-< t1 t2)
+    (< (formula-type-precedence t1) (formula-type-precedence t2)))
+  (define (optionally-parenthesize op formula)
+    (let1 s (pp-formula formula)
+      (if (formula-type-< op (formula-type formula))
+        (format "(~a)" s)
+        s)))
+  (match formula
+    [(? number?) (number->string formula)]
+    [(? symbol?) (symbol->string formula)]
+    [(op a b) (format "~a ~s ~a" (optionally-parenthesize op a) op (optionally-parenthesize op b))])
+  )
+
+(define (main args)
+  (let* ([expr ;'(lambda (f) (f 2))
+               ;'(lambda (x) x)
+               ;'((lambda (f) (f 2)) (lambda (x) x))
+               ;'((lambda (a) (+ a 6)) 7)
+               '((lambda (f) (f 3)) ((lambda (a) (lambda (x) (+ x a))) 2))
+               ;'((lambda (a) (lambda (x) (+ x a))) 2)
+               ;'((lambda (f) (f 3)) (lambda (x) x))
+               ;'((lambda (f) ((lambda (g) (f g)) (lambda (x) (+ x 3)))) (lambda (f) (f 4)))
+               ]
+         [cps-expr (cps-translate expr 'identity)])
+    ((.$ print srl:sxml->html)
+     `(html
+       (head (style "sub { font-size: 10px }"))
+       (body
+        (p . ,(pp expr))
+        (pre ,(format "~s" cps-expr))
+        (p . ,(pp cps-expr))
+        (pre ,(format "~s" (eval cps-expr (interaction-environment))))
+        ))))
+  0)
+
+#;(define (main args)
+  #?=(pp-formula '(/ (+ 1 2) 3))
+  0)
