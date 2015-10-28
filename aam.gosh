@@ -1,0 +1,111 @@
+(use gauche.generator)
+(use sxml.serializer)
+(use srfi-1)
+(use util.match)
+
+(define (pp-expr expr)
+  (match expr
+    [(l (? symbol? x)) `((i ,(symbol->string x)) (sup ,l))]
+    [(l e0 e1) (append '("(") (pp-expr e0) '(" ") (pp-expr e1) `(")" (sup ,l)))]
+    [(l 'lambda x e)
+     (append `("(λ" (i ,(symbol->string x)) ". ") (pp-expr e) `(")" (sup ,l)))]
+    ))
+
+(define (pp-sigma sigma)
+  (define (pp-storable storable)
+    (match storable
+      [(k e rho c)
+       (append
+        `((strong ,(symbol->string k)) "(")
+        (pp-expr e)
+        `(", " (tt ,(format "~s" rho)) ", " (tt ,(format "~s" c)) ")")
+        )
+       ]
+      ['mt '((strong "mt"))]
+      [(v . rho) `("(" ,@(pp-expr v) ", " (tt ,(format "~s" rho)) ")")]
+      ))
+  `((ul .
+     ,(map
+       (^p `(li (tt ,(format "~s" (car p))) " → " . ,(pp-storable (cdr p))))
+       sigma)))
+  )
+
+(define (pp-state state)
+  (match-let1 (e rho sigma a t) state
+    `(ul
+      (li . ,(pp-expr e))
+      (li (tt ,(format "~s" rho)))
+      (li . ,(pp-sigma sigma))
+      (li (tt ,(format "~s" a)))
+      (li (tt ,(format "~s" t))))))
+
+(define (step state tick alloc)
+  (define (u) (tick state))
+  (match state
+    [((l (? symbol? x)) rho sigma a t)
+     (receive (v rho-) (car+cdr (assoc-ref sigma (assoc-ref rho x)))
+       (values "#1" (list v rho- sigma a (u))))]
+    [((l e0 e1) rho sigma a t)
+     (let1 b (alloc state)
+       (values "#2" (list e0 rho (acons b (list 'ar e1 rho a) sigma) b (u))))]
+    [(v rho sigma a t)
+     (match (assoc-ref sigma a)
+       [('ar e rho- c)
+        (let1 b (alloc state)
+          (values "#3" (list e rho- (acons b (list 'fn v rho c) sigma) b (u))))]
+       [('fn (l 'lambda x e) rho- c)
+        (let1 b (alloc state)
+          (values "#4" (list e (acons x b rho-) (acons b (cons v rho) sigma) c (u))))]
+       [else (values #f ())]
+       )]
+    ))
+
+
+(define (label-expr expr)
+  (define label (generate (^y (let loop ([i 1]) (y i) (loop (+ i 1))))))
+  (let rec ((expr expr))
+    (match expr
+      [('lambda x e) `(,(label) lambda ,x ,(rec e))]
+      [(e1 e2) `(,(label) ,(rec e1) ,(rec e2))]
+      [(? symbol? x) `(,(label) ,x)]
+      )))
+
+(define (inj expr)
+  `(,(label-expr expr) () (((#f ()) . mt)) (#f ()) (#f ())))
+
+(define (step-through expr tick alloc)
+  (define (pp state)
+    ;(print state)
+    ;(print (pp-state state))
+    (print (srl:sxml->html (pp-state state)))
+    )
+  (let loop ((state (inj expr)))
+    (pp state)
+    (receive (rule state-) (step state tick alloc)
+      (when rule
+        (begin (print rule) (loop state-))
+        ))))
+
+(define (main args)
+  (define (tick state)
+    (match state
+      [((l x) _ _ _ t) t]
+      [((l _ _) _ _ _ (_ delta)) (list l delta)]
+      [(_ _ sigma a (l delta))
+       (match (assoc-ref sigma a)
+         [('ar _ _ _) (list l delta)]
+         [('fn _ _ _) (list #f (cons l delta))]
+         )]
+      ))
+  (define (alloc state)
+    (match state
+      [((_ (l . _) _) _ _ _ (_ delta)) (list l delta)]
+      [(_ _ sigma a (_ delta))
+       (match (assoc-ref sigma a)
+         [('ar (l . _) _ _) (list l delta)]
+         [('fn (_ 'lambda x _) _ _) (list x delta)])]
+      ))
+  ;(step-through '((lambda x x) (lambda y y)) tick alloc)
+  ;(step-through '((lambda f (f f)) (lambda x x)) tick alloc)
+  (step-through '((lambda f (f (f f))) (lambda x x)) tick alloc)
+  0)
