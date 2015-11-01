@@ -1,0 +1,80 @@
+(use gauche.generator)
+(use sxml.serializer)
+(use srfi-1)
+(use util.match)
+
+(define (step state tick alloc)
+  (define (u) (tick state))
+  (define value?
+    (match-lambda
+      [(? number?) #t]
+      [('lambda (? symbol?) . _) #t]
+      [('pair _ _) #t]
+      [else #f]
+      ))
+  (define delta?
+    (cut member <> '(+ cons car cdr)))
+  (match state
+    [((? symbol? x) rho sigma a t)
+     (receive (v rho-) (car+cdr (assoc-ref sigma (assoc-ref rho x)))
+       (values "#1" (list v rho- sigma a (u))))]
+    [(((? delta? delta) . args) rho sigma a t)
+     (let1 b (alloc state)
+       (values "#5" (list (car args) rho (acons b (list 'pr delta () (cdr args) rho a) sigma) b (u))))]
+    [((e0 e1) rho sigma a t)
+     (let1 b (alloc state)
+       (values "#2" (list e0 rho (acons b (list 'ar e1 rho a) sigma) b (u))))]
+    [((? value? v) rho sigma a t)
+     (match (assoc-ref sigma a)
+       [('ar e rho- c)
+        (let1 b (alloc state)
+          (values "#3" (list e rho- (acons b (list 'fn v rho c) sigma) b (u))))]
+       [('fn ('lambda x e) rho- c)
+        (let1 b (alloc state)
+          (values "#4" (list e (acons x b rho-) (acons b (cons v rho) sigma) c (u))))]
+       [('pr delta vargs () rho- c)
+        (let* ([f (case delta
+                    ((+) +)
+                    ((-) -)
+                    ((*) *)
+                    ((/) /)
+                    ((cons) (^(a d) `(pair ,a ,d)))
+                    ((car) (match-lambda [('pair a _) a]))
+                    ((cdr) (match-lambda [('pair _ d) d])))]
+               [v (apply f (reverse (cons v vargs)))])
+          (values "#7" (list v rho- sigma c (u)))
+          )]
+       [('pr delta vargs (e . eargs) rho- c)
+        (let1 b (alloc state)
+          (values "#6" (list e rho- (acons b (list 'pr delta (cons v vargs) eargs rho- c) sigma) b (u))))]
+       [else (values #f ())]
+       )]
+    ))
+
+(define (inj expr)
+  `(,expr () ((0 . mt)) 0 1))
+
+(define (step-through expr tick alloc)
+  (define (pp state)
+    (print state)
+    ;(print (pp-state state))
+    ;(print (srl:sxml->html (pp-state state)))
+    )
+  (let loop ((state (inj expr)))
+    (pp state)
+    (receive (rule state-) (step state tick alloc)
+      (when rule
+        (print rule)
+        (loop state-)
+        ))))
+
+(define (main args)
+  (define tick (match-lambda [(_ _ _ _ t) (+ t 1)]))
+  (define alloc (match-lambda [(_ _ _ _ t) t]))
+  ;(step-through '((lambda x x) (lambda y y)) tick alloc)
+  ;(step-through '((lambda f (f f)) (lambda x x)) tick alloc)
+  ;(step-through '((lambda f (f (f f))) (lambda x x)) tick alloc)
+  ;(step-through '(cdr (cons (+ 1 2) (cons 9 (+ 3 8)))) tick alloc)
+  ;(step-through '((lambda x (+ x 3)) 5) tick alloc)
+  (step-through '(((lambda p (lambda x ((car p) x))) (cons (lambda x (+ x x)) (lambda y y))) 12) tick alloc)
+  0)
