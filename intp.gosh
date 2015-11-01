@@ -1,0 +1,24 @@
+(use util.match)
+(use slib)
+(require 'trace)
+
+(define make-closure list)
+(define decompose-closure (cut apply values <>))
+(define augment acons)
+(define lookup assq-ref)
+(define (E expr env)
+  (match expr
+    [(? number?) expr]
+    [(? symbol?) (lookup env expr)]
+    [('lambda (x) e) (make-closure x e env)]
+    [(e1 e2)
+     (receive [x e env-] (decompose-closure (E e1 env))
+       (E e (augment x (E e2 env) env-)))]
+    [('+ e1 e2)
+     (+ (E e1 env) (E e2 env))]
+    ))
+
+(define (main args)
+  (trace E)
+  (E '((lambda (f) (f 4)) (lambda (x) (+ x 5))) ())
+  0)
