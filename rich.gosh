@@ -18,9 +18,9 @@
     [((? symbol? x) rho sigma a t)
      (receive (v rho-) (car+cdr (assoc-ref sigma (assoc-ref rho x)))
        (values "#1" (list v rho- sigma a (u))))]
-    [(((? delta? delta) . args) rho sigma a t)
+    [(((? delta? delta) . args) rho sigma a t) ; this clause must come before #2
      (let1 b (alloc state)
-       (values "#5" (list (car args) rho (acons b (list 'pr delta () (cdr args) rho a) sigma) b (u))))]
+       (values "#3" (list (car args) rho (acons b (list 'pr delta () (cdr args) rho a) sigma) b (u))))]
     [((e0 e1) rho sigma a t)
      (let1 b (alloc state)
        (values "#2" (list e0 rho (acons b (list 'ar e1 rho a) sigma) b (u))))]
@@ -28,10 +28,15 @@
      (match (assoc-ref sigma a)
        [('ar e rho- c)
         (let1 b (alloc state)
-          (values "#3" (list e rho- (acons b (list 'fn v rho c) sigma) b (u))))]
+          ; fn creation
+          (values "#4" (list e rho- (acons b (list 'fn v rho c) sigma) b (u))))]
        [('fn ('lambda x e) rho- c)
         (let1 b (alloc state)
-          (values "#4" (list e (acons x b rho-) (acons b (cons v rho) sigma) c (u))))]
+          ; fn pop
+          (values "#5" (list e (acons x b rho-) (acons b (cons v rho) sigma) c (u))))]
+       [('pr delta vargs (e . eargs) rho- c)
+        (let1 b (alloc state)
+          (values "#6" (list e rho- (acons b (list 'pr delta (cons v vargs) eargs rho- c) sigma) b (u))))]
        [('pr delta vargs () rho- c)
         (let* ([f (case delta
                     ((+) +)
@@ -44,9 +49,6 @@
                [v (apply f (reverse (cons v vargs)))])
           (values "#7" (list v rho- sigma c (u)))
           )]
-       [('pr delta vargs (e . eargs) rho- c)
-        (let1 b (alloc state)
-          (values "#6" (list e rho- (acons b (list 'pr delta (cons v vargs) eargs rho- c) sigma) b (u))))]
        [else (values #f ())]
        )]
     ))
