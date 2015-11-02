@@ -1,17 +1,19 @@
+(use gauche.collection)
 (use gauche.generator)
 (use sxml.serializer)
 (use srfi-1)
 (use util.match)
 
+(define value?
+  (match-lambda
+    [(? number?) #t]
+    [('lambda (? symbol?) . _) #t]
+    [('pair _ _) #t]
+    [else #f]
+    ))
+
 (define (step state tick alloc)
   (define (u) (tick state))
-  (define value?
-    (match-lambda
-      [(? number?) #t]
-      [('lambda (? symbol?) . _) #t]
-      [('pair _ _) #t]
-      [else #f]
-      ))
   (define delta?
     (cut member <> '(+ cons car cdr)))
   (match state
@@ -54,11 +56,13 @@
     ))
 
 (define (inj expr)
-  `(,expr () ((0 . mt)) 0 1))
+  `(,expr () ((0 . mt)) 0 ((1) 1)))
 
 (define (step-through expr tick alloc)
   (define (pp state)
-    (print state)
+    (match-let1 (e rho sigma a t) state
+      (print (list e rho (car sigma) a t)))
+    ;(print state)
     ;(print (pp-state state))
     ;(print (srl:sxml->html (pp-state state)))
     )
@@ -71,12 +75,31 @@
         ))))
 
 (define (main args)
-  (define tick (match-lambda [(_ _ _ _ t) (+ t 1)]))
-  (define alloc (match-lambda [(_ _ _ _ t) t]))
+  (define tick
+    (match-lambda
+      [((? value?) rho sigma a (s t))
+       (match (assoc-ref sigma a)
+         [('ar _ _ _) (list (append s '(0)) (+ t 1))]
+         [('fn _ _ _)
+          (list (values-ref
+                 (fold2 (^(b l f)
+                          (if (= b 0)
+                            (values (cons (f b) l) identity)
+                            (values (cons b l) f)))
+                        () (^_ 1)
+                        (reverse s))
+                 0)
+                (+ t 1))]
+         [else (list s (+ t 1))])]
+      [(_ _ _ _ (s t)) (list s (+ t 1))]
+      ))
+  (define alloc (match-lambda [(_ _ _ _ (_ t)) t]))
   ;(step-through '((lambda x x) (lambda y y)) tick alloc)
   ;(step-through '((lambda f (f f)) (lambda x x)) tick alloc)
   ;(step-through '((lambda f (f (f f))) (lambda x x)) tick alloc)
   ;(step-through '(cdr (cons (+ 1 2) (cons 9 (+ 3 8)))) tick alloc)
   ;(step-through '((lambda x (+ x 3)) 5) tick alloc)
-  (step-through '(((lambda p (lambda x ((car p) x))) (cons (lambda x (+ x x)) (lambda y y))) 12) tick alloc)
+  ;(step-through '(((lambda p (lambda x ((car p) x))) (cons (lambda x (+ x x)) (lambda y y))) 12) tick alloc)
+  ;(step-through '(((lambda x (lambda y (+ x y))) 12) 3) tick alloc)
+  (step-through '((lambda x ((lambda y (+ x y)) 3)) 12) tick alloc)
   0)
