@@ -16,9 +16,10 @@
   (E (v ...)) ; escaped lambdas
   )
 
-(define-metafunction tCESK
-  lookup : ((any any) ...) any -> any
-  [(lookup (any_pre ... (any_k any_v) any_post ...) any_k) any_v]
+(define-judgment-form tCESK
+  #:mode (lookup I I O)
+  #:contract (lookup ((any any) ...) any any)
+  [(lookup (any_pre ... (any_k any_v) any_post ...) any_k any_v)]
   )
 
 (define-metafunction tCESK
@@ -63,13 +64,13 @@
   [(reachable? σ a_from a_to) #f]
   )
 
-; The function name is misleading: it modifies E when we actually find something escaping
+; The function name is misleading: it modifies E when it actually finds something escaping
 (define-metafunction tCESK
   check-escape : σ a v E -> E
   [(check-escape σ a_κ v (v_E ...))
    (v v_E ...)
-   (where (λ a_v x e) v)
-   (where #f (reachable? σ a_κ a_v))
+   (where (λ a_v x e) v) ; The value in the store has a label --
+   (where #f (reachable? σ a_κ a_v)) ; -- whose creating continuation is not reachable.
    ]
   [(check-escape σ a_κ v E) E]
   )
@@ -84,7 +85,8 @@
    tCESK
    (--> (x ρ σ a t E)
         (v ρ_v σ a (tick x ρ σ a t) E)
-        (where (v ρ_v) (lookup σ (lookup ρ x)))
+        (judgment-holds (lookup ρ x a_ρ))
+        (judgment-holds (lookup σ a_ρ (v ρ_v)))
         "1")
    (--> ((e_1 e_2) ρ σ a t E)
         ,(let ([b (term (alloc (e_1 e_2) ρ σ a t))])
@@ -93,7 +95,7 @@
    (--> (v ρ σ a t E)
         ,(let ([b (term (alloc v ρ σ a t))])
            (term (e ρ_κ (extend σ ,b (fn v ρ a_κ)) ,b (tick v ρ σ a t) E)))
-        (where (ar e ρ_κ a_κ) (lookup σ a))
+        (judgment-holds (lookup σ a (ar e ρ_κ a_κ)))
         "3")
    (--> ((λ x e) ρ σ a t E)
         ,(let ([b (term (alloc (λ x e) ρ σ a t))])
@@ -103,7 +105,7 @@
                   a_κ
                   (tick (λ x e) ρ σ a t)
                   (check-escape σ a_κ v_κ E))))
-        (where (fn v_κ ρ_κ a_κ) (lookup σ a))
+        (judgment-holds (lookup σ a (fn v_κ ρ_κ a_κ)))
         "4a")
    (--> ((λ a_v x e) ρ σ a t E)
         ,(let ([b (term (alloc (λ a_v x e) ρ σ a t))])
@@ -113,7 +115,7 @@
                   a_κ
                   (tick (λ a_v x e) ρ σ a t)
                   (check-escape σ a_κ v_κ E))))
-        (where (fn v_κ ρ_κ a_κ) (lookup σ a))
+        (judgment-holds (lookup σ a (fn v_κ ρ_κ a_κ)))
         "4b")
    ))
 
