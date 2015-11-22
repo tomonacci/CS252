@@ -119,7 +119,80 @@
         "4b")
    ))
 
+(define-extended-language tCESK-abstract tCESK
+  (σ any) ; dict with addresses as keys and sets of storables as values
+  )
+
+(define-judgment-form tCESK-abstract
+  #:mode (select-σ I O)
+  #:contract (select-σ (any ...) any)
+  [(select-σ (any_pre ... any any_post ...) any)]
+  )
+
+(define-metafunction tCESK-abstract
+  extend-σ : any any any -> any
+  [(extend-σ any any_k any_v)
+   ,(dict-update (term any) (term any_k) (λ (s) (set-add s (term any_v))) (set))]
+  )
+
+; We really need better tick^ and alloc^...
+(define-metafunction tCESK-abstract
+  tick^ : e ρ σ a t -> t
+  [(tick^ e ρ σ a t) ,(remainder (+ (term t) 1) 100)]
+  )
+
+(define-metafunction tCESK-abstract
+  alloc^ : e ρ σ a t -> a
+  [(alloc^ e ρ σ a t) t]
+  )
+
+(define-metafunction tCESK-abstract
+  inj^ : e -> (e ρ σ a t #;E)
+  [(inj^ e) (e () ,(hash 0 (set (term mt))) 0 1 #;())]
+  )
+
+(define rr-abstract
+  (reduction-relation
+   tCESK-abstract
+   (--> (x ρ σ a t #;E)
+        (v ρ_v σ a (tick^ x ρ σ a t) #;E)
+        (judgment-holds (lookup ρ x a_ρ))
+        (judgment-holds (select-σ ,(set->list (dict-ref (term σ) (term a_ρ) (set))) (v ρ_v)))
+        "1")
+   (--> ((e_1 e_2) ρ σ a t #;E)
+        ,(let ([b (term (alloc^ (e_1 e_2) ρ σ a t))])
+           (term (e_1 ρ (extend-σ σ ,b (ar e_2 ρ a)) ,b (tick^ (e_1 e_2) ρ σ a t) #;E)))
+        "2")
+   (--> (v ρ σ a t #;E)
+        ,(let ([b (term (alloc^ v ρ σ a t))])
+           (term (e ρ_κ (extend-σ σ ,b (fn v ρ a_κ)) ,b (tick^ v ρ σ a t) #;E)))
+        (judgment-holds (select-σ ,(set->list (dict-ref (term σ) (term a) (set))) (ar e ρ_κ a_κ)))
+        "3")
+   (--> ((λ x e) ρ σ a t #;E)
+        ,(let ([b (term (alloc^ (λ x e) ρ σ a t))])
+           (term ((λ-body v_κ)
+                  (extend ρ_κ (λ-var v_κ) ,b)
+                  (extend-σ σ ,b ((λ a_κ x e) ρ))
+                  a_κ
+                  (tick^ (λ x e) ρ σ a t)
+                  #;(check-escape σ a_κ v_κ E))))
+        (judgment-holds (select-σ ,(set->list (dict-ref (term σ) (term a) (set))) (fn v_κ ρ_κ a_κ)))
+        "4a")
+   (--> ((λ a_v x e) ρ σ a t #;E)
+        ,(let ([b (term (alloc^ (λ a_v x e) ρ σ a t))])
+           (term ((λ-body v_κ)
+                  (extend ρ_κ (λ-var v_κ) ,b)
+                  (extend-σ σ ,b ((λ a_v x e) ρ))
+                  a_κ
+                  (tick^ (λ a_v x e) ρ σ a t)
+                  #;(check-escape σ a_κ v_κ E))))
+        (judgment-holds (select-σ ,(set->list (dict-ref (term σ) (term a) (set))) (fn v_κ ρ_κ a_κ)))
+        "4b")
+   ))
+
 ; Things to try:
 ; (apply-reduction-relation* rr-concrete (term (inj ((λ x x) (λ y y)))))
 ; (traces rr-concrete (term (inj ((λ x x) (λ y y)))))
 ; (traces rr-concrete (term (inj (((λ f (λ g (g f))) (λ x x)) (λ y (y (λ z z)))))))
+; (traces rr-abstract (term (inj^ ((λ x x) (λ y y)))))
+; (traces rr-abstract (term (inj^ (((λ f (λ g (g f))) (λ x x)) (λ y (y (λ z z)))))))
