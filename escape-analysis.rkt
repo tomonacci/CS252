@@ -53,14 +53,14 @@
   )
 
 (define-metafunction tCESK
-  reachable? : σ a a -> #t ∨ #f ; for some weird reason if I write 'boolean' as the codomain I get a runtime error :<
+  reachable? : σ a a -> boolean
   [(reachable? σ a a) #t]
   [(reachable? σ a_from a_to)
    (reachable? σ a a_to)
-   (where (ar e ρ a) (lookup σ a_from))]
+   (judgment-holds (lookup σ a_from (ar e ρ a)))]
   [(reachable? σ a_from a_to)
    (reachable? σ a a_to)
-   (where (fn e ρ a) (lookup σ a_from))]
+   (judgment-holds (lookup σ a_from (fn e ρ a)))]
   [(reachable? σ a_from a_to) #f]
   )
 
