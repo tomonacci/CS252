@@ -190,6 +190,13 @@
         "4b")
    ))
 
+(define (reduce-and-extract-E e)
+  (car (map (λ (state) (car (reverse state))) (apply-reduction-relation* rr-concrete (term (inj ,e))))))
+
+(test-equal (reduce-and-extract-E '((λ x x) (λ y y))) '())
+(test-equal (reduce-and-extract-E '(((λ f (λ g (g f))) (λ x x)) (λ y (y (λ z z))))) '((λ 1 x x)))
+(test-results)
+
 ; Things to try:
 ; (apply-reduction-relation* rr-concrete (term (inj ((λ x x) (λ y y)))))
 ; (traces rr-concrete (term (inj ((λ x x) (λ y y)))))
