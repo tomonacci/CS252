@@ -298,6 +298,7 @@
          (step^ state tick^ alloc^))
         (loop seen todo edges)))))
 
+; usage: gosh aam.gosh > aam.xhtml
 (define (main args)
   ; tCESK*
   (define (inj expr)
