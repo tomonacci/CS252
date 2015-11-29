@@ -7,6 +7,8 @@
 (define (pp-expr expr)
   (match expr
     [(l (? symbol? x)) `((i ,(symbol->string x)) (sup ,l))]
+    [(l (l- 'lambda #f x e) e-)
+     (append `("(" (b (@ (style "font-family: monospace")) "let ") (i ,(symbol->string x)) " = ") (pp-expr e-) '(" " (tt (b "in")) " ") (pp-expr e) `(")" (sup ,l- "," ,l)))]
     [(l e0 e1) (append '("(") (pp-expr e0) '(" ") (pp-expr e1) `(")" (sup ,l)))]
     [(l 'lambda #f x e)
      (append `("(λ" (i ,(symbol->string x)) ". ") (pp-expr e) `(")" (sup ,l)))]
@@ -178,6 +180,7 @@
   (define label (generate (^y (let loop ([i 1]) (y i) (loop (+ i 1))))))
   (let rec ((expr expr))
     (match expr
+      [('let x e1 e2) `(,(label) (,(label) lambda #f ,x ,(rec e2)) ,(rec e1))]
       [('lambda x e) `(,(label) lambda #f ,x ,(rec e))]
       [(e1 e2) `(,(label) ,(rec e1) ,(rec e2))]
       [(? symbol? x) `(,(label) ,x)]
@@ -318,6 +321,10 @@
   ;(step-through^ '((lambda x x) (lambda y y)) inj^ tick^ alloc^)
   ;(step-through^ '(((lambda f (lambda g (g f))) (lambda x x)) (lambda y (y (lambda z z)))) cfa-inj^ cfa-tick^ cfa-alloc^)
   ;(step-through^ '(((lambda f (lambda g (g f))) (lambda x x)) (lambda y (y (lambda z z)))) inj^ tick^ alloc^)
+  (step-through '(let f (lambda x x)
+                   (let w (lambda y (lambda z z))
+                     (w f)))
+                inj tick alloc)
   ;(step-through '((lambda x x) (lambda y y)) tick alloc)
   (step-through '((lambda id
                     ((lambda w (id (lambda z z)))
