@@ -8,8 +8,10 @@
   (match expr
     [(l (? symbol? x)) `((i ,(symbol->string x)) (sup ,l))]
     [(l e0 e1) (append '("(") (pp-expr e0) '(" ") (pp-expr e1) `(")" (sup ,l)))]
-    [(l 'lambda x e)
+    [(l 'lambda #f x e)
      (append `("(λ" (i ,(symbol->string x)) ". ") (pp-expr e) `(")" (sup ,l)))]
+    [(l 'lambda a x e)
+     (append `("(λ" (sup (tt ,(x->string a))) (i ,(symbol->string x)) ". ") (pp-expr e) `(")" (sup ,l)))]
     ))
 
 (define (pp-sigma sigma :optional (abstracted? #f))
@@ -89,6 +91,17 @@
   (skvl-update sigma (cons a (list storable)) car
    (^(a _) (cons (car a) (sl-update (cdr a) storable)))))
 
+(define (reachable? sigma a-kappa a-abs :optional (abstracted? #f))
+  (or (equal? a-kappa a-abs)
+      (any
+       (match-lambda
+         [('ar _ _ a) (reachable? sigma a a-abs abstracted?)]
+         [('fn _ _ a) (reachable? sigma a a-abs abstracted?)]
+         [else #f]
+         )
+       ((if abstracted? identity list) (assoc-ref sigma a-kappa)))))
+
+; When you design tick and alloc, you may not include #f in Addr.
 (define (step state tick alloc)
   (define (u) (tick state))
   (match state
@@ -101,11 +114,21 @@
     [(v rho sigma a t)
      (match (assoc-ref sigma a)
        [('ar e rho- c)
+        ; Escape analysis!
+        (match-let1 (l 'lambda a-abs _ _) v
+          (when a-abs
+            (format (standard-error-port) "~d ~a\n" l (if (reachable? sigma c a-abs) "is contained" "escapes"))))
         (let1 b (alloc state)
           (values "#3" (list e rho- (assoc-update b (list 'fn v rho c) sigma) b (u))))]
-       [('fn (l 'lambda x e) rho- c)
+       [('fn (_ 'lambda _ x-kappa e-kappa) rho- c)
         (let1 b (alloc state)
-          (values "#4" (list e (assoc-update x b rho-) (assoc-update b (cons v rho) sigma) c (u))))]
+          (receive [rule w] (match v
+                              [(l 'lambda #f x e)
+                               (values "#4a" (list l 'lambda c x e))]
+                              [(_ 'lambda _ _ _)
+                               (values "#4b" v)]
+                              )
+            (values rule (list e-kappa (assoc-update x-kappa b rho-) (assoc-update b (cons w rho) sigma) c (u)))))]
        [else (values #f ())]
        )]
     ))
@@ -132,11 +155,20 @@
      (append-map
       (^k (match k
             [('ar e rho- c)
+             ; Escape analysis!
+             (match-let1 (l 'lambda a-abs _ _) v
+               (when a-abs
+                 (format (standard-error-port) "~d ~a\n" l (if (reachable? sigma c a-abs #t) "is contained" "escapes"))))
              (let1 b (alloc^ state k)
                (list (cons "#3" (list e rho- (update-sigma b (list 'fn v rho c) sigma) b (tick^ state k)))))]
-            [('fn (l 'lambda x e) rho- c)
+            [('fn (l 'lambda a-abs x e) rho- c)
              (let1 b (alloc^ state k)
-               (list (cons "#4" (list e (assoc-update x b rho-) (update-sigma b (cons v rho) sigma) c (tick^ state k)))))]
+               (receive [rule w] (match v
+                                   [(l 'lambda #f x-kappa e-kappa)
+                                    (values "#4a" (list l 'lambda c x-kappa e-kappa))]
+                                   [(l 'lambda a-kappa x-kappa e-kappa)
+                                    (values "#4b" v)])
+                 (list (cons rule (list e (assoc-update x b rho-) (update-sigma b (cons w rho) sigma) c (tick^ state k))))))]
             [else ()]
             ))
       (assoc-ref sigma a))]
@@ -146,7 +178,7 @@
   (define label (generate (^y (let loop ([i 1]) (y i) (loop (+ i 1))))))
   (let rec ((expr expr))
     (match expr
-      [('lambda x e) `(,(label) lambda ,x ,(rec e))]
+      [('lambda x e) `(,(label) lambda #f ,x ,(rec e))]
       [(e1 e2) `(,(label) ,(rec e1) ,(rec e2))]
       [(? symbol? x) `(,(label) ,x)]
       )))
@@ -240,7 +272,8 @@
       [(_ _ sigma a (_ delta))
        (match (assoc-ref sigma a)
          [('ar (l . _) _ _) (list l delta)]
-         [('fn (_ 'lambda x _) _ _) (list x delta)])]
+         [('fn (_ 'lambda _ x _) _ _) (list x delta)]
+         )]
       ))
 
   (define (inj^ expr)
@@ -271,7 +304,8 @@
       [(_ _ sigma a (_ delta))
        (match kappa
          [('ar (l . _) _ _) (list l delta)]
-         [('fn (_ 'lambda x _) _ _) (list x delta)])]
+         [('fn (_ 'lambda _ x _) _ _) (list x delta)]
+         )]
       ))
 
   ;(step-through^ '((lambda x x) (lambda y y)) cfa-inj^ cfa-tick^ cfa-alloc^)
