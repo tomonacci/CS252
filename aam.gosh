@@ -371,12 +371,25 @@
   ;(step-through^ '((lambda x x) (lambda y y)) inj^ tick^ alloc^)
   ;(step-through^ '(((lambda f (lambda g (g f))) (lambda x x)) (lambda y (y (lambda z z)))) cfa-inj^ cfa-tick^ cfa-alloc^)
   ;(step-through^ '(((lambda f (lambda g (g f))) (lambda x x)) (lambda y (y (lambda z z)))) inj^ tick^ alloc^)
+  ;(step-through '(((lambda f (lambda g (g f))) (lambda x x)) (lambda y (y (lambda z z)))) inj tick alloc)
+  ;(step-through '((lambda f ((lambda w (w f)) (lambda y (lambda z z)))) (lambda x x)) inj tick alloc)
   (step-through '(let f (lambda x x)
                    (let w (lambda y (lambda z z))
                      (w f)))
                 inj tick alloc)
+  ;(step-through '(((lambda f (f (lambda x x))) (lambda y y)) (lambda z z)) inj tick alloc)
   ;(step-through '((lambda x x) (lambda y y)) tick alloc)
   #|
+  (step-through '((lambda id
+                    ((lambda w (id (lambda z z)))
+                     (id (lambda y y))))
+                  (lambda x x))
+                inj tick alloc)
+  (step-through^ '((lambda id
+                     ((lambda w (id (lambda z z)))
+                      (id (lambda y y))))
+                   (lambda x x))
+                 inj^ tick^ alloc^)
   (step-through '((lambda id
                     ((lambda w (id (lambda z z)))
                      (id (lambda y y))))
