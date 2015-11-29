@@ -19,15 +19,15 @@
        (append
         `((strong ,(symbol->string k)) "(")
         (pp-expr e)
-        `(", " (tt ,(format "~s" rho)) ", " (tt ,(format "~s" c)) ")")
+        `(", " (tt ,(x->string rho)) ", " (tt ,(x->string c)) ")")
         )
        ]
       ['mt '((strong "mt"))]
-      [(v . rho) `("(" ,@(pp-expr v) ", " (tt ,(format "~s" rho)) ")")]
+      [(v . rho) `("(" ,@(pp-expr v) ", " (tt ,(x->string rho)) ")")]
       ))
   `((ul .
      ,(map
-       (^p `(li (tt ,(format "~s" (car p)))
+       (^p `(li (tt ,(x->string (car p)))
                 " → "
                 . ,(if abstracted?
                      (concatenate (intersperse '(", ") (map pp-storable (cdr p))))
@@ -39,10 +39,10 @@
   (match-let1 (e rho sigma a t) state
     `(ul
       (li . ,(pp-expr e))
-      (li (tt ,(format "~s" rho)))
+      (li (tt ,(x->string rho)))
       (li . ,(pp-sigma sigma abstracted?))
-      (li (tt ,(format "~s" a)))
-      (li (tt ,(format "~s" t))))))
+      (li (tt ,(x->string a)))
+      (li (tt ,(x->string t))))))
 
 (define (generic< a b)
   (define type-predicates (list undefined? boolean? integer? symbol? string? null? pair?))
