@@ -190,12 +190,15 @@
     (print (srl:sxml->html (pp-state state)))
     )
   (print "<html xmlns=\"http://www.w3.org/1999/xhtml\">")
+  (print "<head><style>body { margin: 0; padding: 2em; }</style></head>")
+  (print "<body>")
   (let loop ((state (inj expr)))
     (pp state)
     (receive (rule state-) (step state tick alloc)
       (when rule
         (begin (print rule) (loop state-))
         )))
+  (print "</body>")
   (print "</html>")
   )
 
@@ -208,6 +211,8 @@
     (if (null? todo)
       (begin
         (print "<html xmlns=\"http://www.w3.org/1999/xhtml\">")
+        (print "<head><style>body { margin: 0; padding: 2em; }</style></head>")
+        (print "<body>")
         #|
         (for-each
          (^p (receive [state n] (car+cdr p)
@@ -228,6 +233,7 @@
            )
          edges)
         (print "</pre>")
+        (print "</body>")
         (print "</html>")
         )
       (match-let1 ((state . n) . todo) todo
