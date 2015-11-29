@@ -5,6 +5,8 @@
 (use srfi-113)
 (use util.match)
 
+; pp = pretty-print
+; In general, these procedures produce lists of SXML expressions.
 (define (pp-expr expr)
   (match expr
     [(l (? symbol? x)) `((i ,(symbol->string x)) (sup ,l))]
@@ -49,6 +51,16 @@
       (li (tt ,(x->string a)))
       (li (tt ,(x->string t))))))
 
+; generic< : any any -> boolean
+; Defines "less-than" between objects a, b (possibly of different types) in the following manner:
+;   1. a < b if a's type appears before b's type in the list type-predicates
+;   2. When a, b has the same type, a < b is defined using procedures in the list type<.
+;      The only tricky ones are:
+;        - #t < #f for booleans
+;        - symbols are compared with respect to their string values
+;        - pairs are sorted in the dictionary order, where each "letters" are compared by generic<
+; Equality is always by equal?.
+; By applying sort-by with this procedure, lists can be canonicalized (in an admittedly fairly arbitrary way).
 (define (generic< a b)
   (define type-predicates (list undefined? boolean? integer? symbol? string? null? pair?))
   (define type<
@@ -74,6 +86,7 @@
              (not (equal? a b))
              ((list-ref type< i) a b)))))
 
+; sorted key-value list update
 (define (skvl-update skvl kv kv->key adjoin)
   (let loop ([result ()] [skvl skvl])
     (cond [(null? skvl)
@@ -84,16 +97,22 @@
            (reverse! result (cons kv skvl))]
           [else (loop (cons (car skvl) result) (cdr skvl))])))
 
+; sorted list update
+; Inserts e in a sorted (w.r.t. generic<) list if it is absent.
 (define (sl-update sl e)
   (skvl-update sl e identity (^(x _) x)))
 
+; alist with singular values (like environments and concrete stores)
 (define (assoc-update k v alist)
   (skvl-update alist (cons k v) car (^(_ p) p)))
 
+; sigma is assumed to be an alist with sorted lists of storables as values.
 (define (update-sigma a storable sigma)
   (skvl-update sigma (cons a (list storable)) car
    (^(a _) (cons (car a) (sl-update (cdr a) storable)))))
 
+; Is a-abs reachable in sigma from a-kappa?
+; If abstracted? is #t, sigma's values are thought to be lists of storables.
 (define (reachable? sigma a-kappa a-abs :optional (abstracted? #f))
   (or (equal? a-kappa a-abs)
       (any
@@ -104,6 +123,7 @@
          )
        ((if abstracted? identity list) (assoc-ref sigma a-kappa)))))
 
+; Concrete reduction relation (function). Returns two values: the rule used and the next state.
 ; When you design tick and alloc, you may not include #f in Addr.
 (define (step state tick alloc)
   (define (u) (tick state))
@@ -136,6 +156,7 @@
        )]
     ))
 
+; Abstract reduction relation. Returns the list of (rule . next-state) pairs.
 (define (step^ state tick^ alloc^)
   (match state
     [((l (? symbol? x)) rho sigma a t)
@@ -161,7 +182,7 @@
              ; Escape analysis!
              (match-let1 (l 'lambda a-abs _ _) v
                (when a-abs
-                 (format (standard-error-port) "~d ~a\n" l (if (reachable? sigma c a-abs #t) "is contained" "escapes"))))
+                 (format (standard-error-port) "~d ~a\n" l (if (reachable? sigma c a-abs #t) "may be contained" "definitely escapes"))))
              (let1 b (alloc^ state k)
                (list (cons "#3" (list e rho- (update-sigma b (list 'fn v rho c) sigma) b (tick^ state k)))))]
             [('fn (l 'lambda a-abs x e) rho- c)
@@ -177,6 +198,7 @@
       (assoc-ref sigma a))]
     ))
 
+; Labels human-friendly expr. Additionally desugars let.
 (define (label-expr expr)
   (define label (generate (^y (let loop ([i 1]) (y i) (loop (+ i 1))))))
   (let rec ((expr expr))
@@ -187,6 +209,7 @@
       [(? symbol? x) `(,(label) ,x)]
       )))
 
+; Garbage collection. Returns the garbage free version of the state.
 (define (cleanse state)
   (match-let1 (e rho sigma a t) state
     (let* ([seen (list->set 'equal? (cons a (map cdr rho)))]
@@ -202,6 +225,7 @@
            )))
       (list e rho (filter (^p (set-contains? seen (car p))) sigma) a t))))
 
+; Prints out HTML picturing a concrete machine's operation.
 (define (step-through expr inj tick alloc)
   (define (pp state)
     ;(print state)
@@ -223,6 +247,9 @@
   (print "</html>")
   )
 
+; Prints out HTML picturing an abstract machine's operation.
+; Each state is assigned an unique number.
+; At the end of the page, there is a Graphviz-compatible graph description using state numbers as nodes and edges labeled by transitioning rules.
 (define (step-through^ expr inj^ tick^ alloc^)
   (define initial-state (cons (inj^ expr) 0))
   (let loop ([seen (hash-table 'equal? initial-state)]
@@ -272,6 +299,7 @@
         (loop seen todo edges)))))
 
 (define (main args)
+  ; tCESK*
   (define (inj expr)
     `(,(label-expr expr) () ((0 . mt)) 0 1))
   (define (tick state)
@@ -281,6 +309,7 @@
     (match state
       [(_ _ _ _ t) t]))
 
+  ; concrete (k-)CFA
   (define (cfa-inj expr)
     `(,(label-expr expr) () (((#f ()) . mt)) (#f ()) (#f ())))
   (define (cfa-tick state)
@@ -303,15 +332,18 @@
          )]
       ))
 
+  ; Finitization by circular time. Really bad idea.
+  (define end-of-the-time 2)
   (define (inj^ expr)
-    `(,(label-expr expr) () ((0 . (mt))) 0 1))
+    `(,(label-expr expr) () ((0 . (mt))) 0 ,(remainder 1 end-of-the-time)))
   (define (tick^ state kappa)
     (match state
-      [(_ _ _ _ t) (remainder (+ t 1) 2)]))
+      [(_ _ _ _ t) (remainder (+ t 1) end-of-the-time)]))
   (define (alloc^ state kappa)
     (match state
       [(_ _ _ _ t) t]))
 
+  ; abstract k-CFA
   (define k 0)
   (define (cfa-inj^ expr)
     `(,(label-expr expr) () (((#f ()) . (mt))) (#f ()) (#f ())))
@@ -344,12 +376,12 @@
                      (w f)))
                 inj tick alloc)
   ;(step-through '((lambda x x) (lambda y y)) tick alloc)
+  #|
   (step-through '((lambda id
                     ((lambda w (id (lambda z z)))
                      (id (lambda y y))))
                   (lambda x x))
                 cfa-inj cfa-tick cfa-alloc)
-  #|
   (step-through^ '((lambda id
                      ((lambda w (id (lambda z z)))
                       (id (lambda y y))))
