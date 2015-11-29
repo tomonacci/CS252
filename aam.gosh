@@ -1,4 +1,5 @@
 (use gauche.generator)
+(use gauche.sequence)
 (use sxml.serializer)
 (use srfi-1)
 (use util.match)
@@ -11,7 +12,7 @@
      (append `("(λ" (i ,(symbol->string x)) ". ") (pp-expr e) `(")" (sup ,l)))]
     ))
 
-(define (pp-sigma sigma)
+(define (pp-sigma sigma :optional (abstracted? #f))
   (define (pp-storable storable)
     (match storable
       [(k e rho c)
@@ -26,18 +27,67 @@
       ))
   `((ul .
      ,(map
-       (^p `(li (tt ,(format "~s" (car p))) " → " . ,(pp-storable (cdr p))))
+       (^p `(li (tt ,(format "~s" (car p)))
+                " → "
+                . ,(if abstracted?
+                     (concatenate (intersperse '(", ") (map pp-storable (cdr p))))
+                     (pp-storable (cdr p)))))
        sigma)))
   )
 
-(define (pp-state state)
+(define (pp-state state :optional (abstracted? #f))
   (match-let1 (e rho sigma a t) state
     `(ul
       (li . ,(pp-expr e))
       (li (tt ,(format "~s" rho)))
-      (li . ,(pp-sigma sigma))
+      (li . ,(pp-sigma sigma abstracted?))
       (li (tt ,(format "~s" a)))
       (li (tt ,(format "~s" t))))))
+
+(define (generic< a b)
+  (define type-predicates (list undefined? boolean? integer? symbol? string? null? pair?))
+  (define type<
+    (list
+     #f ; undefined?
+     (^(a b) (and a (not b))) ; boolean?
+     < ; integer?
+     (^(a b) (string<? (symbol->string a) (symbol->string b))) ; symbol?
+     string<? ; string?
+     #f ; null?
+     (^(a b) ; pair?
+       (cond [(equal? (car a) (car b))
+              (generic< (cdr a) (cdr b))]
+             [(generic< (car a) (car b)) #t]
+             [else #f]))
+     ))
+  (define (type-index x)
+    (find-index (^p (p x)) type-predicates))
+  (let ([i (type-index a)]
+        [j (type-index b)])
+    (or (< i j)
+        (and (= i j)
+             (not (equal? a b))
+             ((list-ref type< i) a b)))))
+
+(define (skvl-update skvl kv kv->key adjoin)
+  (let loop ([result ()] [skvl skvl])
+    (cond [(null? skvl)
+           (reverse! result (cons kv skvl))]
+          [(equal? (kv->key kv) (kv->key (car skvl)))
+           (reverse! result (cons (adjoin (car skvl) kv) (cdr skvl)))]
+          [(generic< (kv->key kv) (kv->key (car skvl)))
+           (reverse! result (cons kv skvl))]
+          [else (loop (cons (car skvl) result) (cdr skvl))])))
+
+(define (sl-update sl e)
+  (skvl-update sl e identity (^(x _) x)))
+
+(define (assoc-update k v alist)
+  (skvl-update alist (cons k v) car (^(_ p) p)))
+
+(define (update-sigma a storable sigma)
+  (skvl-update sigma (cons a (list storable)) car
+   (^(a _) (cons (car a) (sl-update (cdr a) storable)))))
 
 (define (step state tick alloc)
   (define (u) (tick state))
@@ -47,19 +97,50 @@
        (values "#1" (list v rho- sigma a (u))))]
     [((l e0 e1) rho sigma a t)
      (let1 b (alloc state)
-       (values "#2" (list e0 rho (acons b (list 'ar e1 rho a) sigma) b (u))))]
+       (values "#2" (list e0 rho (assoc-update b (list 'ar e1 rho a) sigma) b (u))))]
     [(v rho sigma a t)
      (match (assoc-ref sigma a)
        [('ar e rho- c)
         (let1 b (alloc state)
-          (values "#3" (list e rho- (acons b (list 'fn v rho c) sigma) b (u))))]
+          (values "#3" (list e rho- (assoc-update b (list 'fn v rho c) sigma) b (u))))]
        [('fn (l 'lambda x e) rho- c)
         (let1 b (alloc state)
-          (values "#4" (list e (acons x b rho-) (acons b (cons v rho) sigma) c (u))))]
+          (values "#4" (list e (assoc-update x b rho-) (assoc-update b (cons v rho) sigma) c (u))))]
        [else (values #f ())]
        )]
     ))
 
+(define (step^ state tick^ alloc^)
+  (match state
+    [((l (? symbol? x)) rho sigma a t)
+     (append-map
+      (^k (append-map
+           (match-lambda
+             ['mt ()]
+             [('ar _ _ _) ()]
+             [('fn _ _ _) ()]
+             [(v . rho-) (list (cons "#1" (list v rho- sigma a (tick^ state k))))]
+             )
+           (assoc-ref sigma (assoc-ref rho x))))
+      (assoc-ref sigma a))]
+    [((l e0 e1) rho sigma a t)
+     (append-map
+      (^k (let1 b (alloc^ state k)
+            (list (cons "#2" (list e0 rho (update-sigma b (list 'ar e1 rho a) sigma) b (tick^ state k))))))
+      (assoc-ref sigma a))]
+    [(v rho sigma a t)
+     (append-map
+      (^k (match k
+            [('ar e rho- c)
+             (let1 b (alloc^ state k)
+               (list (cons "#3" (list e rho- (update-sigma b (list 'fn v rho c) sigma) b (tick^ state k)))))]
+            [('fn (l 'lambda x e) rho- c)
+             (let1 b (alloc^ state k)
+               (list (cons "#4" (list e (assoc-update x b rho-) (update-sigma b (cons v rho) sigma) c (tick^ state k)))))]
+            [else ()]
+            ))
+      (assoc-ref sigma a))]
+    ))
 
 (define (label-expr expr)
   (define label (generate (^y (let loop ([i 1]) (y i) (loop (+ i 1))))))
@@ -70,34 +151,90 @@
       [(? symbol? x) `(,(label) ,x)]
       )))
 
-(define (inj expr)
-  `(,(label-expr expr) () (((#f ()) . mt)) (#f ()) (#f ())))
-
-(define (step-through expr tick alloc)
+(define (step-through expr inj tick alloc)
   (define (pp state)
     ;(print state)
     ;(print (pp-state state))
     (print (srl:sxml->html (pp-state state)))
     )
+  (print "<html xmlns=\"http://www.w3.org/1999/xhtml\">")
   (let loop ((state (inj expr)))
     (pp state)
     (receive (rule state-) (step state tick alloc)
       (when rule
         (begin (print rule) (loop state-))
-        ))))
+        )))
+  (print "</html>")
+  )
+
+(define (step-through^ expr inj^ tick^ alloc^)
+  (define initial-state (cons (inj^ expr) 0))
+  (let loop ([seen (hash-table 'equal? initial-state)]
+             [todo (list initial-state)]
+             [edges ()]
+             )
+    (if (null? todo)
+      (begin
+        (print "<html xmlns=\"http://www.w3.org/1999/xhtml\">")
+        #|
+        (for-each
+         (^p (receive [state n] (car+cdr p)
+               (print n)
+               (print state)))
+         (sort-by! (hash-table->alist seen) cdr))
+        |#
+        (for-each
+         (^p (receive [state n] (car+cdr p)
+               (print n)
+               (print (srl:sxml->html (pp-state state #t)))))
+         (sort-by! (hash-table->alist seen) cdr))
+        (print "<pre>")
+        (for-each
+         (match-lambda
+           [(rule n n-)
+            (format #t "~s -> ~s [label=\"~a\"];\n" n n- rule)]
+           )
+         edges)
+        (print "</pre>")
+        (print "</html>")
+        )
+      (match-let1 ((state . n) . todo) todo
+        (for-each
+         (^p (receive [rule state-] (car+cdr p)
+               (let1 n- (if (hash-table-exists? seen state-)
+                          (hash-table-get seen state-)
+                          (rlet1 n- (hash-table-num-entries seen)
+                            (hash-table-put! seen state- n-)
+                            (when (zero? (remainder n- 100))
+                              #?=n-)
+                            (push! todo (cons state- n-))))
+                 (push! edges (list rule n n-)))))
+         (step^ state tick^ alloc^))
+        (loop seen todo edges)))))
 
 (define (main args)
+  (define (inj expr)
+    `(,(label-expr expr) () ((0 . mt)) 0 1))
   (define (tick state)
+    (match state
+      [(_ _ _ _ t) (+ t 1)]))
+  (define (alloc state)
+    (match state
+      [(_ _ _ _ t) t]))
+
+  (define (cfa-inj expr)
+    `(,(label-expr expr) () (((#f ()) . mt)) (#f ()) (#f ())))
+  (define (cfa-tick state)
     (match state
       [((l x) _ _ _ t) t]
       [((l _ _) _ _ _ (_ delta)) (list l delta)]
       [(_ _ sigma a (l delta))
        (match (assoc-ref sigma a)
          [('ar _ _ _) (list l delta)]
-         [('fn _ _ _) (list #f (cons l delta))]
+         [('fn _ _ _) (list #f (if l (cons l delta) delta))]
          )]
       ))
-  (define (alloc state)
+  (define (cfa-alloc state)
     (match state
       [((_ (l . _) _) _ _ _ (_ delta)) (list l delta)]
       [(_ _ sigma a (_ delta))
@@ -105,7 +242,57 @@
          [('ar (l . _) _ _) (list l delta)]
          [('fn (_ 'lambda x _) _ _) (list x delta)])]
       ))
+
+  (define (inj^ expr)
+    `(,(label-expr expr) () ((0 . (mt))) 0 1))
+  (define (tick^ state kappa)
+    (match state
+      [(_ _ _ _ t) (remainder (+ t 1) 2)]))
+  (define (alloc^ state kappa)
+    (match state
+      [(_ _ _ _ t) t]))
+
+  (define k 0)
+  (define (cfa-inj^ expr)
+    `(,(label-expr expr) () (((#f ()) . (mt))) (#f ()) (#f ())))
+  (define (cfa-tick^ state kappa)
+    (match state
+      [((l x) _ _ _ t) t]
+      [((l _ _) _ _ _ (_ delta)) (list l delta)]
+      [(_ _ sigma a (l delta))
+       (match kappa
+         [('ar _ _ _) (list l delta)]
+         [('fn _ _ _) (list #f (take* (if l (cons l delta) delta) k))]
+         )]
+      ))
+  (define (cfa-alloc^ state kappa)
+    (match state
+      [((_ (l . _) _) _ _ _ (_ delta)) (list l delta)]
+      [(_ _ sigma a (_ delta))
+       (match kappa
+         [('ar (l . _) _ _) (list l delta)]
+         [('fn (_ 'lambda x _) _ _) (list x delta)])]
+      ))
+
+  ;(step-through^ '((lambda x x) (lambda y y)) cfa-inj^ cfa-tick^ cfa-alloc^)
+  ;(step-through^ '((lambda x x) (lambda y y)) inj^ tick^ alloc^)
+  ;(step-through^ '(((lambda f (lambda g (g f))) (lambda x x)) (lambda y (y (lambda z z)))) cfa-inj^ cfa-tick^ cfa-alloc^)
+  ;(step-through^ '(((lambda f (lambda g (g f))) (lambda x x)) (lambda y (y (lambda z z)))) inj^ tick^ alloc^)
   ;(step-through '((lambda x x) (lambda y y)) tick alloc)
+  (step-through '((lambda id
+                    ((lambda w (id (lambda z z)))
+                     (id (lambda y y))))
+                  (lambda x x))
+                cfa-inj cfa-tick cfa-alloc)
+  #|
+  (step-through^ '((lambda id
+                     ((lambda w (id (lambda z z)))
+                      (id (lambda y y))))
+                   (lambda x x))
+                 cfa-inj^ cfa-tick^ cfa-alloc^)
+  |#
+  ;#?=(sort '(0 8 7 symbol lambda "tick" (a . b) #f #f (u . a) #t (a b 0) (0 u c) #f) generic<)
+  ;#?=(sort '((#f ()) (2 ()) (13 ()) (id ()) (4 (1))) generic<)
   ;(step-through '((lambda f (f f)) (lambda x x)) tick alloc)
-  (step-through '((lambda f (f (f f))) (lambda x x)) tick alloc)
+  ;(step-through '((lambda f (f (f f))) (lambda x x)) tick alloc)
   0)
