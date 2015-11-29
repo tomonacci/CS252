@@ -2,6 +2,7 @@
 (use gauche.sequence)
 (use sxml.serializer)
 (use srfi-1)
+(use srfi-113)
 (use util.match)
 
 (define (pp-expr expr)
@@ -186,6 +187,21 @@
       [(? symbol? x) `(,(label) ,x)]
       )))
 
+(define (cleanse state)
+  (match-let1 (e rho sigma a t) state
+    (let* ([seen (list->set 'equal? (cons a (map cdr rho)))]
+           [todo (set->list seen)]
+           )
+      (until (null? todo)
+        (for-each
+         (^a (set! seen (values-ref (set-search! seen a (^(insert _) (push! todo a) (insert #f)) (^ _ seen)) 0)))
+         (match (assoc-ref sigma (pop! todo))
+           ['mt ()]
+           [((or 'ar 'fn) _ rho a) (cons a (map cdr rho))]
+           [(_ . rho) (map cdr rho)]
+           )))
+      (list e rho (filter (^p (set-contains? seen (car p))) sigma) a t))))
+
 (define (step-through expr inj tick alloc)
   (define (pp state)
     ;(print state)
@@ -199,7 +215,9 @@
     (pp state)
     (receive (rule state-) (step state tick alloc)
       (when rule
-        (begin (print rule) (loop state-))
+        (set! state- (cleanse state-))
+        (print rule)
+        (loop state-)
         )))
   (print "</body>")
   (print "</html>")
