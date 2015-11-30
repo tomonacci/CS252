@@ -251,40 +251,12 @@
 ; Each state is assigned an unique number.
 ; At the end of the page, there is a Graphviz-compatible graph description using state numbers as nodes and edges labeled by transitioning rules.
 (define (step-through^ expr inj^ tick^ alloc^)
-  (define initial-state (cons (inj^ expr) 0))
-  (let loop ([seen (hash-table 'equal? initial-state)]
-             [todo (list initial-state)]
-             [edges ()]
-             )
-    (if (null? todo)
-      (begin
-        (print "<html xmlns=\"http://www.w3.org/1999/xhtml\">")
-        (print "<head><style>body { margin: 0; padding: 2em; }</style></head>")
-        (print "<body>")
-        #|
-        (for-each
-         (^p (receive [state n] (car+cdr p)
-               (print n)
-               (print state)))
-         (sort-by! (hash-table->alist seen) cdr))
-        |#
-        (for-each
-         (^p (receive [state n] (car+cdr p)
-               (print n)
-               (print (srl:sxml->html (pp-state state #t)))))
-         (sort-by! (hash-table->alist seen) cdr))
-        (print "<pre>")
-        (for-each
-         (match-lambda
-           [(rule n n-)
-            (format #t "~s -> ~s [label=\"~a\"];\n" n n- rule)]
-           )
-         edges)
-        (print "</pre>")
-        (print "</body>")
-        (print "</html>")
-        )
-      (match-let1 ((state . n) . todo) todo
+  (let* ([seen (hash-table 'equal? (cons (inj^ expr) 0))]
+         [todo (hash-table->alist seen)]
+         [edges ()]
+         )
+    (until (null? todo)
+      (receive [state n] (car+cdr (pop! todo))
         (for-each
          (^p (receive [rule state-] (car+cdr p)
                (let1 n- (if (hash-table-exists? seen state-)
@@ -295,8 +267,33 @@
                               #?=n-)
                             (push! todo (cons state- n-))))
                  (push! edges (list rule n n-)))))
-         (step^ state tick^ alloc^))
-        (loop seen todo edges)))))
+         (step^ state tick^ alloc^))))
+    (print "<html xmlns=\"http://www.w3.org/1999/xhtml\">")
+    (print "<head><style>body { margin: 0; padding: 2em; }</style></head>")
+    (print "<body>")
+    #|
+    (for-each
+     (^p (receive [state n] (car+cdr p)
+           (print n)
+           (print state)))
+     (sort-by! (hash-table->alist seen) cdr))
+    |#
+    (for-each
+     (^p (receive [state n] (car+cdr p)
+           (print n)
+           (print (srl:sxml->html (pp-state state #t)))))
+     (sort-by! (hash-table->alist seen) cdr))
+    (print "<pre>")
+    (for-each
+     (match-lambda
+       [(rule n n-)
+        (format #t "~s -> ~s [label=\"~a\"];\n" n n- rule)]
+       )
+     edges)
+    (print "</pre>")
+    (print "</body>")
+    (print "</html>")
+    ))
 
 ; usage: gosh aam.gosh > aam.xhtml
 (define (main args)
@@ -352,7 +349,7 @@
     (match state
       [((l x) _ _ _ t) t]
       [((l _ _) _ _ _ (_ delta)) (list l delta)]
-      [(_ _ sigma a (l delta))
+      [(_ _ _ _ (l delta))
        (match kappa
          [('ar _ _ _) (list l delta)]
          [('fn _ _ _) (list #f (take* (if l (cons l delta) delta) k))]
@@ -361,7 +358,7 @@
   (define (cfa-alloc^ state kappa)
     (match state
       [((_ (l . _) _) _ _ _ (_ delta)) (list l delta)]
-      [(_ _ sigma a (_ delta))
+      [(_ _ _ _ (_ delta))
        (match kappa
          [('ar (l . _) _ _) (list l delta)]
          [('fn (_ 'lambda _ x _) _ _) (list x delta)]
