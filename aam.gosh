@@ -198,6 +198,95 @@
       (assoc-ref sigma a))]
     ))
 
+(define (update-sigma-ra a-mr storable sigma)
+  (define a-old (list (car a-mr) #f))
+  (define (update-a b)
+    (if (equal? a-mr b) a-old b))
+  (define (update-rho rho)
+    (map (^p (cons (car p) (update-a (cdr p)))) rho))
+  (define (update-e e)
+    (match e
+      [(l x) e]
+      [(l e1 e2)
+       (list l (update-e e1) (update-e e2))]
+      [(l 'lambda b x e)
+       (list l 'lambda (and b (update-a b)) x e)]
+      ))
+  ; FIXME should the reference to a in storable be updated?
+  (assoc-update a-mr (list storable) ; replace the storables associated to a-mr instead of adjoining the new storable to them
+   ((if-let1 a-mr-storables (assoc-ref sigma a-mr) ; move the old most recent storable (if exists) to storables associated to a-old
+      (cut update-sigma a-old (car a-mr-storables) <>) ; taking car is justified since there is at most one "most recent"
+      identity)
+    (map
+     (^p (receive [b storables] (car+cdr p)
+           (cons b
+                 (map
+                  (match-lambda
+                    ['mt 'mt]
+                    [((? (cut memq <> '(ar fn)) k) e rho c)
+                     (list k e (update-rho rho) (update-a c))]
+                    [(v . rho) (cons (update-e v) (update-rho rho))]
+                    )
+                  storables))))
+     sigma))))
+
+(define (mr-reachable? sigma a-kappa a-abs)
+  (and (cadr a-kappa) (cadr a-abs)
+       (or (equal? a-kappa a-abs)
+       (any
+        (match-lambda
+          [('ar _ _ a) (mr-reachable? sigma a a-abs)]
+          [('fn _ _ a) (mr-reachable? sigma a a-abs)]
+          [else #f]
+          )
+        (assoc-ref sigma a-kappa)))))
+
+(define (step-ra state tick^ alloc^)
+  (match state
+    [((l (? symbol? x)) rho sigma a t)
+     (append-map
+      (^k (append-map
+           (match-lambda
+             ['mt ()]
+             [('ar _ _ _) ()]
+             [('fn _ _ _) ()]
+             [(v . rho-) (list (cons "#1" (list v rho- sigma a (tick^ state k))))]
+             )
+           (assoc-ref sigma (assoc-ref rho x))))
+      (assoc-ref sigma a))]
+    [((l e0 e1) rho sigma a t)
+     (append-map
+      (^k (let1 b (list (alloc^ state k) #t)
+            (list (cons "#2" (list e0 rho (update-sigma-ra b (list 'ar e1 rho a) sigma) b (tick^ state k))))))
+      (assoc-ref sigma a))]
+    [(v rho sigma a t)
+     (append-map
+      (^k (match k
+            [('ar e rho- c)
+             ; Escape analysis!
+             (match-let1 (l 'lambda a-abs _ _) v
+               (when a-abs
+                 (format (standard-error-port) "~d ~a\n" l
+                  (if (mr-reachable? sigma c a-abs)
+                    "is definitely contained"
+                    (if (reachable? sigma c a-abs #t)
+                      "may be contained"
+                      "definitely escapes")))))
+             (let1 b (list (alloc^ state k) #t)
+               (list (cons "#3" (list e rho- (update-sigma-ra b (list 'fn v rho c) sigma) b (tick^ state k)))))]
+            [('fn (l 'lambda a-abs x e) rho- c)
+             (let1 b (list (alloc^ state k) #t)
+               (receive [rule w] (match v
+                                   [(l 'lambda #f x-kappa e-kappa)
+                                    (values "#4a" (list l 'lambda c x-kappa e-kappa))]
+                                   [(l 'lambda a-kappa x-kappa e-kappa)
+                                    (values "#4b" v)])
+                 (list (cons rule (list e (assoc-update x b rho-) (update-sigma-ra b (cons w rho) sigma) c (tick^ state k))))))]
+            [else ()]
+            ))
+      (assoc-ref sigma a))]
+    ))
+
 ; Labels human-friendly expr. Additionally desugars let.
 (define (label-expr expr)
   (define label (generate (^y (let loop ([i 1]) (y i) (loop (+ i 1))))))
@@ -295,6 +384,51 @@
     (print "</html>")
     ))
 
+(define (step-through-ra expr inj^ tick^ alloc^)
+  (let* ([seen (hash-table 'equal? (cons (inj^ expr) 0))]
+         [todo (hash-table->alist seen)]
+         [edges ()]
+         )
+    (until (null? todo)
+      (receive [state n] (car+cdr (pop! todo))
+        (for-each
+         (^p (receive [rule state-] (car+cdr p)
+               (let1 n- (if (hash-table-exists? seen state-)
+                          (hash-table-get seen state-)
+                          (rlet1 n- (hash-table-num-entries seen)
+                            (hash-table-put! seen state- n-)
+                            (when (zero? (remainder n- 100))
+                              #?=n-)
+                            (push! todo (cons state- n-))))
+                 (push! edges (list rule n n-)))))
+         (step-ra state tick^ alloc^))))
+    (print "<html xmlns=\"http://www.w3.org/1999/xhtml\">")
+    (print "<head><style>body { margin: 0; padding: 2em; }</style></head>")
+    (print "<body>")
+    #|
+    (for-each
+     (^p (receive [state n] (car+cdr p)
+           (print n)
+           (print state)))
+     (sort-by! (hash-table->alist seen) cdr))
+    |#
+    (for-each
+     (^p (receive [state n] (car+cdr p)
+           (print n)
+           (print (srl:sxml->html (pp-state state #t)))))
+     (sort-by! (hash-table->alist seen) cdr))
+    (print "<pre>")
+    (for-each
+     (match-lambda
+       [(rule n n-)
+        (format #t "~s -> ~s [label=\"~a\"];\n" n n- rule)]
+       )
+     edges)
+    (print "</pre>")
+    (print "</body>")
+    (print "</html>")
+    ))
+
 ; usage: gosh aam.gosh > aam.xhtml
 (define (main args)
   ; tCESK*
@@ -364,6 +498,9 @@
          [('fn (_ 'lambda _ x _) _ _) (list x delta)]
          )]
       ))
+
+  (define (ra-inj expr)
+    `(,(label-expr expr) () ((((#f ()) #t) . (mt))) ((#f ()) #t) (#f ())))
 
   ;(step-through^ '((lambda x x) (lambda y y)) cfa-inj^ cfa-tick^ cfa-alloc^)
   ;(step-through^ '((lambda x x) (lambda y y)) inj^ tick^ alloc^)
